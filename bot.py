@@ -12,19 +12,29 @@ getcontext().prec = 18
 SYMBOL = 'ETH/USDT:USDT'  # only trade ETH/USDT
 TIMEFRAME = '15m'
 ORDER_SIZE_ETH = 0.1  # fixed trade size in ETH
-LEVERAGE = 15
-COOLDOWN_PERIOD = 60 * 30  # 30 minutes
-VOLATILITY_THRESHOLD_PCT = Decimal('0.08')  # minimum ATR% to allow trading
-FRESH_SIGNAL_MAX_PRICE_DEVIATION = 0.006
+LEVERAGE = 10
+COOLDOWN_PERIOD = 60  # 1 minute cooldown for faster entries
+# Loosened volatility threshold to allow more trades but still avoid extremely low volatility
+VOLATILITY_THRESHOLD_PCT = Decimal('0.02')
+FRESH_SIGNAL_MAX_PRICE_DEVIATION = 0.02  # allow more deviation
 PARTIAL_TP_RATIO = Decimal('0.5')  # take 50% at first TP
-TRAIL_ATR_MULTIPLIER = Decimal('1.5')
-TIME_BASED_EXIT_HOURS = 6
-MAX_DAILY_LOSS_PCT = Decimal('0.03')
+TRAIL_ATR_MULTIPLIER = Decimal('1.2')
+TIME_BASED_EXIT_HOURS = 12
+MAX_DAILY_LOSS_PCT = Decimal('0.05')  # more conservative stop
+
+# Indicator params (kept reasonable)
+SUPERTREND_PERIOD = 10
+SUPERTREND_MULTIPLIER = 3.0
+STOCH_K = 14
+STOCH_D = 3
+
+# Volume filter relaxed
+MIN_VOLUME_FACTOR = 0.6  # allow trades when current volume >= 60% of 20-period avg
 
 # Exchange (set your API keys)
 exchange = ccxt.bingx({
-    'apiKey': 'wGY6iowJ9qdr1idLbKOj81EGhhZe5O8dqqZlyBiSjiEZnuZUDULsAW30m4eFaZOu35n5zQktN7a01wKoeSg',
-    'secret': 'tqxcIVDdDJm2GWjinyBJH4EbvJrjIuOVyi7mnKOzhXHquFPNcULqMAOvmSy0pyuoPOAyCzE2zudzEmlwnA',
+    'apiKey': 'YOUR_API_KEY',
+    'secret': 'YOUR_API_SECRET',
     'enableRateLimit': True,
     'options': {
         'defaultType': 'swap',
@@ -43,8 +53,7 @@ def generate_client_order_id():
     return "ccbot-" + uuid.uuid4().hex[:16]
 
 
-def fetch_ohlcv(symbol, timeframe, limit=150):
-    print(f"📈 Fetching OHLCV for {symbol} timeframe={timeframe} limit={limit}...")
+def fetch_ohlcv(symbol, timeframe, limit=200):
     ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
@@ -67,7 +76,7 @@ def compute_atr(df, period=14):
     return atr
 
 
-def compute_supertrend(df, period=10, multiplier=3):
+def compute_supertrend(df, period=SUPERTREND_PERIOD, multiplier=SUPERTREND_MULTIPLIER):
     atr = compute_atr(df, period)
     hl2 = (df['high'] + df['low']) / 2
     upperband = hl2 + (multiplier * atr)
@@ -108,7 +117,7 @@ def compute_supertrend(df, period=10, multiplier=3):
     return direction, atr
 
 
-def compute_stochastic(df, k_period=14, d_period=3):
+def compute_stochastic(df, k_period=STOCH_K, d_period=STOCH_D):
     low_min = df['low'].rolling(window=k_period, min_periods=1).min()
     high_max = df['high'].rolling(window=k_period, min_periods=1).max()
     denom = (high_max - low_min).replace(0, np.nan)
@@ -118,30 +127,7 @@ def compute_stochastic(df, k_period=14, d_period=3):
     return k, d
 
 
-# ================== TP/SL CALC ==================
-
-def calculate_tp_sl(entry_price, atr, side):
-    price = Decimal(str(entry_price))
-    atr_dec = Decimal(str(atr))
-    # use simple multiples for TP/SL
-    sl_mult = Decimal('1.5')
-    tp_mult = Decimal('3.0')
-
-    sl_distance = (atr_dec * sl_mult)
-    tp_distance = (atr_dec * tp_mult)
-
-    if side == 'buy':
-        sl_price = float((price - sl_distance).quantize(Decimal('0.01')))
-        tp_price = float((price + tp_distance).quantize(Decimal('0.01')))
-    else:
-        sl_price = float((price + sl_distance).quantize(Decimal('0.01')))
-        tp_price = float((price - tp_distance).quantize(Decimal('0.01')))
-
-    print(f"[TP/SL] TP={tp_price}, SL={sl_price}")
-    return tp_price, sl_price
-
-
-# ================== SIGNALS ==================
+# ================== SIGNALS (LOOSENED) ==================
 
 def is_fresh_signal(df):
     if len(df) < 50:
@@ -162,32 +148,35 @@ def is_fresh_signal(df):
     atr_pct = Decimal(str(atr_latest / price * 100)) if price != 0 else Decimal('0')
 
     print(f"[DEBUG] ATR (price): {atr_latest:.6f}, ATR%: {atr_pct:.6f}")
+    # relaxed volatility requirement
     if atr_pct < VOLATILITY_THRESHOLD_PCT:
-        print("🔇 Skipping due to low volatility (ATR% below threshold)")
-        return None
+        print("🔇 ATR% below threshold — but continuing because threshold is relaxed.")
+        # allow trade but penalize score later
 
     print(f"[DEBUG] Stochastic: K={k.iloc[-1]:.2f}, D={d.iloc[-1]:.2f}, cross_up={cross_up}, cross_down={cross_down}")
     print(f"[DEBUG] Price deviation: {deviation:.6f}")
 
-    signal = None
+    # Allow trades on stochastic cross OR momentum when supertrend aligns
     try:
         st_is_up = bool(st_dir.iloc[-1])
     except Exception:
         st_is_up = False
 
+    signal = None
     if cross_up and st_is_up and deviation <= FRESH_SIGNAL_MAX_PRICE_DEVIATION:
         signal = 'buy'
     elif cross_down and (not st_is_up) and deviation <= FRESH_SIGNAL_MAX_PRICE_DEVIATION:
         signal = 'sell'
+    else:
+        # fallback momentum: if price has risen 0.3% in last candle and supertrend is up -> buy
+        price_change = (price - signal_price) / signal_price if signal_price != 0 else 0
+        if st_is_up and price_change > 0.003:
+            signal = 'buy'
+        if (not st_is_up) and price_change < -0.003:
+            signal = 'sell'
 
     if not signal:
         print("🚫 Conditions not met for signal.")
-        return None
-
-    # Freshness check (ensures the cross happened recently)
-    age_candles = 1
-    if age_candles > 1:
-        print("⌛ Signal too old")
         return None
 
     return (signal, atr_latest)
@@ -196,6 +185,9 @@ def is_fresh_signal(df):
 # ================== POSITION HELPERS ==================
 
 def in_position(symbol):
+    # check memory first
+    if symbol in open_trades:
+        return True
     try:
         positions = exchange.fetch_positions([symbol])
         for pos in positions:
@@ -204,7 +196,7 @@ def in_position(symbol):
                 return True
     except Exception as e:
         print(f"[in_position warning] {e}")
-    return symbol in open_trades
+    return False
 
 
 def close_position_market(symbol, reason='manual'):
@@ -263,9 +255,9 @@ def monitor_open_trades():
                 close_position_market(symbol, reason='time_exit')
                 continue
 
-            # Trailing stop: move SL to breakeven after +1 ATR and trail by TRAIL_ATR_MULTIPLIER
+            # Trailing stop: move SL to breakeven after +0.8 ATR and trail by TRAIL_ATR_MULTIPLIER
             profit_move = (current_price - entry_price) if side == 'buy' else (entry_price - current_price)
-            if profit_move > 0 and abs(profit_move) >= atr_now:
+            if profit_move > 0 and abs(profit_move) >= 0.8 * atr_now:
                 if side == 'buy':
                     new_sl = current_price - float(Decimal(str(atr_now)) * TRAIL_ATR_MULTIPLIER)
                 else:
@@ -295,36 +287,40 @@ def signal_strength_and_execute(df):
         return False
     signal, atr = base
 
-    # Volume confirmation
+    # relaxed Volume confirmation
     vol_now = df['volume'].iloc[-1]
     vol_avg = df['volume'].rolling(window=20, min_periods=1).mean().iloc[-1]
-    if vol_now < vol_avg:
-        print("[Volume] Current volume below 20-period average. Skipping.")
+    if vol_now < (MIN_VOLUME_FACTOR * vol_avg):
+        print("[Volume] Current volume below relaxed threshold. Skipping.")
         return False
 
-    # Strength score (supertrend alignment + stochastic cross magnitude + volume)
-    score = 0.6
+    # Strength score (relaxed)
+    score = 0.4
     k, d = compute_stochastic(df)
     cross_magnitude = abs(k.iloc[-1] - d.iloc[-1]) / 100.0
-    score += min(0.3, float(cross_magnitude * 0.3))
+    score += min(0.4, float(cross_magnitude * 0.4))
     vol_factor = min(1.0, float(vol_now / (vol_avg + 1e-9)))
-    score += 0.1 * vol_factor
+    score += 0.2 * vol_factor
 
     print(f"[Signal Score] {score:.3f}")
-    if score < 0.35:
+    if score < 0.25:
         print("[Score] Signal strength below threshold. Skipping.")
         return False
 
-    # final ATR% check
+    # final ATR% check (relaxed)
     price = df['close'].iloc[-1]
     atr_val = compute_atr(df).iloc[-1]
     atr_pct = Decimal(str(atr_val / price * 100)) if price != 0 else Decimal('0')
     if atr_pct < VOLATILITY_THRESHOLD_PCT:
-        print("🔇 Skipping due to low volatility (post-check)")
+        print("🔇 Low volatility but still allowing execution under relaxed rules.")
+
+    # must not already be in position
+    if in_position(SYMBOL):
+        print("[Position] Already in position, skipping new entry.")
         return False
 
     # place fixed-size order (0.1 ETH)
-    trade_meta = place_order(SYMBOL, signal, price, atr_val, qty_override=ORDER_SIZE_BY_SYMBOL.get(SYMBOL, 0.1))
+    trade_meta = place_order(SYMBOL, signal, price, atr_val, qty_override=ORDER_SIZE_ETH)
     if trade_meta:
         print(f"✅ {signal.upper()} {SYMBOL} placed")
         return True
@@ -342,10 +338,7 @@ def place_order(symbol, side, entry_price, atr, qty_override=None):
         print(f"[Qty/ATR Error] {e}")
         return False
 
-    qty = float(qty_override) if qty_override is not None else float(ORDER_SIZE_BY_SYMBOL.get(symbol, 0.1))
-    # force fixed 0.1 ETH if symbol matches
-    if symbol == SYMBOL:
-        qty = 0.1
+    qty = float(qty_override) if qty_override is not None else float(ORDER_SIZE_ETH)
 
     print(f"[DEBUG] Qty: {qty}")
 
@@ -431,7 +424,7 @@ def place_order(symbol, side, entry_price, atr, qty_override=None):
 
 # ================== MAIN ==================
 if __name__ == '__main__':
-    print("🚀 Trading bot started with 15m Supertrend+Stochastic (fixed 0.1 ETH size)")
+    print("🚀 Trading bot started — relaxed entry rules to open more trades")
     while True:
         try:
             # reset daily trackers at midnight UTC
@@ -457,4 +450,6 @@ if __name__ == '__main__':
         except Exception as e:
             print(f"[Main loop error] {e}")
 
-        time.sleep(30)
+        time.sleep(20)
+
+
