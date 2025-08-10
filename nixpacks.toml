@@ -1,4 +1,5 @@
-ccxt
-unicorn
-pandas
-numpy
+[build]
+nixPkgs = ['python311.withPackages (ps: with ps; [ ccxt unicorn pandas numpy requests ])']
+
+[start]
+cmd = 'python bot.py'
