@@ -1,0 +1,11 @@
+[build]
+nixPkgs = ['python311.withPackages (ps: with ps; [ requests pandas numpy ])']
+
+[start]
+cmd = 'python bot.py'
+[build]
+nixPkgs = ['python311.withPackages (ps: with ps; [ requests pandas numpy ])']
+
+[start]
+cmd = 'python bot.py'
+
