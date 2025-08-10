@@ -29,7 +29,7 @@ STOCH_K = 14
 STOCH_D = 3
 
 # Volume filter relaxed
-MIN_VOLUME_FACTOR = 0.6  # allow trades when current volume >= 60% of 20-period avg
+MIN_VOLUME_FACTOR = 0.2  # allow trades when current volume >= 60% of 20-period avg
 
 # Exchange (set your API keys)
 exchange = ccxt.bingx({
@@ -451,6 +451,7 @@ if __name__ == '__main__':
             print(f"[Main loop error] {e}")
 
         time.sleep(20)
+
 
 
 
