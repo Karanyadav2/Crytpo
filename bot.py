@@ -11,7 +11,7 @@ getcontext().prec = 18
 # ================== CONFIG ===================
 SYMBOL = 'ETH/USDT:USDT'  # only trade ETH/USDT
 TIMEFRAME = '15m'
-ORDER_SIZE_ETH = 0.1  # fixed trade size in ETH
+ORDER_SIZE_ETH = 0.12  # fixed trade size in ETH
 LEVERAGE = 10
 COOLDOWN_PERIOD = 60  # 1 minute cooldown for faster entries
 # Loosened volatility threshold to allow more trades but still avoid extremely low volatility
@@ -369,7 +369,7 @@ def calculate_tp_sl(entry_price, atr, side):
 
     # Use 1.5 ATR for TP and 1.0 ATR for SL (keeps behaviour consistent with suggested defaults)
     tp_multiplier = 1.5
-    sl_multiplier = 1.0
+    sl_multiplier = 1.5
 
     if side == 'buy':
         tp_price = entry_price + (atr * tp_multiplier)
@@ -506,3 +506,4 @@ if __name__ == '__main__':
             print(f"[Main loop error] {e}")
 
         time.sleep(20)
+
