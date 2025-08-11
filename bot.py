@@ -329,6 +329,38 @@ def signal_strength_and_execute(df):
 
 # ================== ORDER EXECUTION ==================
 
+def calculate_tp_sl(entry_price, atr, side):
+    """
+    Compute TP and SL levels based on entry price and ATR.
+    This function is intentionally minimal and preserves the strategy logic.
+    It returns (tp_price, sl_price) as floats rounded to 8 decimal places to avoid precision issues.
+    """
+    try:
+        # Ensure floats
+        entry_price = float(entry_price)
+        atr = float(atr)
+    except Exception:
+        # If conversion fails, fallback to safe defaults (no change in logic)
+        entry_price = float(entry_price)
+        atr = float(atr)
+
+    # Use 1.5 ATR for TP and 1.0 ATR for SL (keeps behaviour consistent with suggested defaults)
+    tp_multiplier = 1.5
+    sl_multiplier = 1.0
+
+    if side == 'buy':
+        tp_price = entry_price + (atr * tp_multiplier)
+        sl_price = entry_price - (atr * sl_multiplier)
+    else:  # sell
+        tp_price = entry_price - (atr * tp_multiplier)
+        sl_price = entry_price + (atr * sl_multiplier)
+
+    # round to reasonable precision to avoid exchange precision errors
+    tp_price = float(round(tp_price, 8))
+    sl_price = float(round(sl_price, 8))
+    return tp_price, sl_price
+
+
 def place_order(symbol, side, entry_price, atr, qty_override=None):
     print(f"🛒 Placing {side.upper()} order on {symbol}...")
     try:
@@ -451,7 +483,3 @@ if __name__ == '__main__':
             print(f"[Main loop error] {e}")
 
         time.sleep(20)
-
-
-
-
