@@ -12,7 +12,7 @@ getcontext().prec = 18
 SYMBOL = 'ETH/USDT:USDT'
 TIMEFRAME = '15m'
 ORDER_SIZE_ETH = 0.12
-LEVERAGE = 10
+LEVERAGE = 15
 VOLATILITY_THRESHOLD_PCT = Decimal('0.02')
 FRESH_SIGNAL_MAX_PRICE_DEVIATION = 0.02
 TIME_BASED_EXIT_HOURS = 12
@@ -275,4 +275,5 @@ if __name__ == '__main__':
             print(f"[Main loop error] {e}")
 
         time.sleep(20)
+
 
