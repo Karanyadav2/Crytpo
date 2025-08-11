@@ -369,7 +369,7 @@ def calculate_tp_sl(entry_price, atr, side):
 
     # Use 1.5 ATR for TP and 1.0 ATR for SL (keeps behaviour consistent with suggested defaults)
     tp_multiplier = 1.5
-    sl_multiplier = 1.0
+    sl_multiplier = 1.5
 
     if side == 'buy':
         tp_price = entry_price + (atr * tp_multiplier)
@@ -506,3 +506,4 @@ if __name__ == '__main__':
             print(f"[Main loop error] {e}")
 
         time.sleep(20)
+
