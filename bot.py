@@ -17,7 +17,7 @@ COOLDOWN_PERIOD = 60  # 1 minute cooldown for faster entries
 # Loosened volatility threshold to allow more trades but still avoid extremely low volatility
 VOLATILITY_THRESHOLD_PCT = Decimal('0.02')
 FRESH_SIGNAL_MAX_PRICE_DEVIATION = 0.02  # allow more deviation
-PARTIAL_TP_RATIO = Decimal('0.5')  # take 50% at first TP
+PARTIAL_TP_RATIO = Decimal('0.5')  # take 50% at first TP (kept for compatibility but not used)
 TRAIL_ATR_MULTIPLIER = Decimal('1.2')
 TIME_BASED_EXIT_HOURS = 12
 MAX_DAILY_LOSS_PCT = Decimal('0.05')  # more conservative stop
