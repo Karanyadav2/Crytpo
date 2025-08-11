@@ -34,7 +34,7 @@ MIN_VOLUME_FACTOR = 0.2  # allow trades when current volume >= 60% of 20-period 
 # Exchange (set your API keys)
 exchange = ccxt.bingx({
     'apiKey': 'wGY6iowJ9qdr1idLbKOj81EGhhZe5O8dqqZlyBiSjiEZnuZUDULsAW30m4eFaZOu35n5zQktN7a01wKoeSg',
-    'secret': 'tqxcIVDdDJm2GWjinyBJH4EbvJjIuOVyi7mnKOzhXHquFPNcULqMAOvmSy0pyuoPOAyCzE2zudzEmlwnA',
+    'secret': 'tqxcIVDdDJm2GWjinyBJH4EbvJrjIuOVyi7mnKOzhXHquFPNcULqMAOvmSy0pyuoPOAyCzE2zudzEmlwnA',
     'enableRateLimit': True,
     'options': {
         'defaultType': 'swap',
@@ -204,13 +204,10 @@ def has_active_tp_sl(symbol):
     try:
         open_orders = exchange.fetch_open_orders(symbol=symbol)
         for o in open_orders:
-            # Some exchanges set type to 'stop_market', 'take_profit', etc. Others include info fields.
             otype = str(o.get('type', '')).lower()
             info = o.get('info', {}) or {}
-            # Basic checks for stop/TP order indicators
             if 'stop' in otype or 'take' in otype or 'tp' in otype or 'stopPrice' in o or 'stopPrice' in info or 'takeProfitPrice' in info or 'takeProfit' in info:
                 return True
-            # Some exchanges use orderType in info: check that too
             order_type_info = str(info.get('orderType', '')).lower()
             if 'tp' in order_type_info or 'sl' in order_type_info or 'stop' in order_type_info:
                 return True
