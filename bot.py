@@ -9,13 +9,16 @@ from decimal import Decimal, getcontext
 getcontext().prec = 18
 
 # ================== CONFIG ===================
-SYMBOL = 'ETH/USDT:USDT'
+SYMBOL = 'ETH/USDT:USDT'  # only trade ETH/USDT
 TIMEFRAME = '15m'
-ORDER_SIZE_ETH = 0.12
+ORDER_SIZE_ETH = 0.12  # fixed trade size in ETH
 LEVERAGE = 10
+COOLDOWN_PERIOD = 60  # 1 minute cooldown
 VOLATILITY_THRESHOLD_PCT = Decimal('0.02')
 FRESH_SIGNAL_MAX_PRICE_DEVIATION = 0.02
 TIME_BASED_EXIT_HOURS = 12
+MAX_DAILY_LOSS_PCT = Decimal('0.05')
+
 SUPERTREND_PERIOD = 10
 SUPERTREND_MULTIPLIER = 3.0
 STOCH_K = 14
@@ -26,12 +29,14 @@ exchange = ccxt.bingx({
     'apiKey': 'wGY6iowJ9qdr1idLbKOj81EGhhZe5O8dqqZlyBiSjiEZnuZUDULsAW30m4eFaZOu35n5zQktN7a01wKoeSg',
     'secret': 'tqxcIVDdDJm2GWjinyBJH4EbvJrjIuOVyi7mnKOzhXHquFPNcULqMAOvmSy0pyuoPOAyCzE2zudzEmlwnA',
     'enableRateLimit': True,
-    'options': {
-        'defaultType': 'swap',
-    }
+    'options': {'defaultType': 'swap'}
 })
 
+last_trade_time = {SYMBOL: 0}
 open_trades = {}
+daily_pnl = Decimal('0')
+daily_loss_stop = False
+current_day = datetime.date.today()
 
 # ================== HELPERS ==================
 
@@ -88,7 +93,7 @@ def compute_supertrend(df, period=SUPERTREND_PERIOD, multiplier=SUPERTREND_MULTI
             supertrend.iat[i] = final_upper.iat[i]
             direction.iat[i] = False
         else:
-            direction.iat[i] = True if df['close'].iat[i] > final_lower.iat[i] else False
+            direction.iat[i] = df['close'].iat[i] > final_lower.iat[i]
             supertrend.iat[i] = final_lower.iat[i] if direction.iat[i] else final_upper.iat[i]
     return direction, atr
 
@@ -111,13 +116,13 @@ def is_fresh_signal(df):
     price = df['close'].iloc[-1]
     signal_price = df['close'].iloc[-2]
     deviation = abs(price - signal_price) / signal_price if signal_price != 0 else 1
+    atr_latest = atr.iloc[-1]
     st_is_up = bool(st_dir.iloc[-1])
-    signal = None
     if cross_up and st_is_up and deviation <= FRESH_SIGNAL_MAX_PRICE_DEVIATION:
-        signal = 'buy'
+        return ('buy', atr_latest)
     elif cross_down and (not st_is_up) and deviation <= FRESH_SIGNAL_MAX_PRICE_DEVIATION:
-        signal = 'sell'
-    return (signal, atr.iloc[-1]) if signal else None
+        return ('sell', atr_latest)
+    return None
 
 def in_position(symbol):
     try:
@@ -126,8 +131,8 @@ def in_position(symbol):
             contracts = pos.get('contracts') or pos.get('size') or pos.get('positionAmt') or 0
             if float(contracts) != 0:
                 return True
-    except Exception as e:
-        print(f"[in_position warning] {e}")
+    except Exception:
+        pass
     return False
 
 def calculate_tp_sl(entry_price, atr, side):
@@ -144,12 +149,12 @@ def calculate_tp_sl(entry_price, atr, side):
     return round(tp_price, 8), round(sl_price, 8)
 
 def place_order(symbol, side, entry_price, atr, qty_override=None):
-    qty = float(qty_override) if qty_override else ORDER_SIZE_ETH
+    qty = float(qty_override) if qty_override else float(ORDER_SIZE_ETH)
     leverage_side = 'LONG' if side == 'buy' else 'SHORT'
     try:
         exchange.set_leverage(LEVERAGE, symbol, params={'marginMode': 'cross', 'side': leverage_side})
-    except Exception as e:
-        print(f"[Leverage Warning] {e}")
+    except Exception:
+        pass
     order_params = {'positionSide': leverage_side, 'newClientOrderId': generate_client_order_id()}
     try:
         exchange.create_order(symbol, 'market', side, qty, None, order_params)
@@ -175,7 +180,17 @@ def place_order(symbol, side, entry_price, atr, qty_override=None):
         })
     except Exception as e:
         print(f"[SL Error] {e}")
-    open_trades[symbol] = {'side': side, 'entry_price': entry_price, 'qty_total': qty, 'tp_price': tp_price, 'sl_price': sl_price, 'atr': atr, 'entry_time': time.time(), 'leverage_side': leverage_side}
+    open_trades[symbol] = {
+        'side': side,
+        'entry_price': entry_price,
+        'qty_total': qty,
+        'tp_price': tp_price,
+        'sl_price': sl_price,
+        'atr': atr,
+        'entry_time': time.time(),
+        'leverage_side': leverage_side
+    }
+    last_trade_time[symbol] = time.time()
     return True
 
 def signal_strength_and_execute(df):
@@ -194,14 +209,25 @@ def signal_strength_and_execute(df):
     return place_order(SYMBOL, signal, price, atr, qty_override=ORDER_SIZE_ETH)
 
 if __name__ == '__main__':
-    print("🚀 Trading bot started — ATR-based TP/SL, single position logic")
+    print("🚀 Trading bot started")
     while True:
         try:
-            df = fetch_ohlcv(SYMBOL, TIMEFRAME)
-            signal_strength_and_execute(df)
+            today = datetime.date.today()
+            if today != current_day:
+                daily_pnl = Decimal('0')
+                daily_loss_stop = False
+                current_day = today
+            if not daily_loss_stop:
+                df = fetch_ohlcv(SYMBOL, TIMEFRAME)
+                try:
+                    signal_strength_and_execute(df)
+                except Exception as e:
+                    print(f"[Signal Error] {e}")
         except Exception as e:
             print(f"[Main loop error] {e}")
         time.sleep(20)
+
+
 
 
 
