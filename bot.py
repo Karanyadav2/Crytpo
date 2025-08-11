@@ -394,7 +394,6 @@ def place_order(symbol, side, entry_price, atr, qty_override=None):
         return False
 
     qty = float(qty_override) if qty_override is not None else float(ORDER_SIZE_ETH)
-
     print(f"[DEBUG] Qty: {qty}")
 
     try:
@@ -440,21 +439,24 @@ def place_order(symbol, side, entry_price, atr, qty_override=None):
         qty_first = qty * float(PARTIAL_TP_RATIO)
         qty_rest = qty - qty_first
 
+    # Create TP order (full qty if partial TP ratio is not used)
     try:
-        tp_order_1 = exchange.create_order(symbol, 'limit', 'sell' if side == 'buy' else 'buy', qty_first, tp_price, {
+        tp_order = exchange.create_order(symbol, 'take_profit_market', 'sell' if side == 'buy' else 'buy', qty, None, {
+            'triggerPrice': tp_price,
+            'stopPrice': tp_price,
             'positionSide': leverage_side,
             'newClientOrderId': generate_client_order_id()
         })
-        print(f"[TP1 Order] Created for {qty_first} at {tp_price}")
+        print(f"[TP Order] Created at {tp_price}")
     except Exception as e:
-        print(f"[TP1 Error] {e}")
+        print(f"[TP Error] {e}")
 
     try:
         sl_order = exchange.create_order(symbol, 'stop_market', 'sell' if side == 'buy' else 'buy', qty, None, {
             'triggerPrice': sl_price,
+            'stopPrice': sl_price,
             'positionSide': leverage_side,
-            'newClientOrderId': generate_client_order_id(),
-            'stopPrice': sl_price
+            'newClientOrderId': generate_client_order_id()
         })
         print(f"[SL Order] Created at {sl_price}")
     except Exception as e:
@@ -475,6 +477,7 @@ def place_order(symbol, side, entry_price, atr, qty_override=None):
 
     last_trade_time[symbol] = time.time()
     return open_trades[symbol]
+
 
 
 # ================== MAIN ==================
@@ -506,4 +509,5 @@ if __name__ == '__main__':
             print(f"[Main loop error] {e}")
 
         time.sleep(20)
+
 
