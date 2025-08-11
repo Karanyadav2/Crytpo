@@ -9,16 +9,14 @@ from decimal import Decimal, getcontext
 getcontext().prec = 18
 
 # ================== CONFIG ===================
-SYMBOL = 'ETH/USDT:USDT'  # only trade ETH/USDT
+SYMBOL = 'ETH/USDT:USDT'
 TIMEFRAME = '15m'
-ORDER_SIZE_ETH = 0.12  # fixed trade size in ETH
+ORDER_SIZE_ETH = 0.12
 LEVERAGE = 10
-COOLDOWN_PERIOD = 60  # 1 minute cooldown
 VOLATILITY_THRESHOLD_PCT = Decimal('0.02')
 FRESH_SIGNAL_MAX_PRICE_DEVIATION = 0.02
 TIME_BASED_EXIT_HOURS = 12
 MAX_DAILY_LOSS_PCT = Decimal('0.05')
-
 SUPERTREND_PERIOD = 10
 SUPERTREND_MULTIPLIER = 3.0
 STOCH_K = 14
@@ -26,8 +24,8 @@ STOCH_D = 3
 MIN_VOLUME_FACTOR = 0.2
 
 exchange = ccxt.bingx({
-    'apiKey': 'wGY6iowJ9qdr1idLbKOj81EGhhZe5O8dqqZlyBiSjiEZnuZUDULsAW30m4eFaZOu35n5zQktN7a01wKoeSg',
-    'secret': 'tqxcIVDdDJm2GWjinyBJH4EbvJrjIuOVyi7mnKOzhXHquFPNcULqMAOvmSy0pyuoPOAyCzE2zudzEmlwnA',
+    'apiKey': 'YOUR_API_KEY',
+    'secret': 'YOUR_SECRET',
     'enableRateLimit': True,
     'options': {'defaultType': 'swap'}
 })
@@ -50,27 +48,28 @@ def fetch_ohlcv(symbol, timeframe, limit=200):
     df.set_index('timestamp', inplace=True)
     return df
 
+# ================== INDICATORS ==================
+
 def compute_atr(df, period=14):
-    high = df['high']
-    low = df['low']
-    close = df['close']
+    high, low, close = df['high'], df['low'], df['close']
     prev_close = close.shift(1)
-    tr1 = high - low
-    tr2 = (high - prev_close).abs()
-    tr3 = (low - prev_close).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    atr = tr.rolling(window=period, min_periods=1).mean()
-    return atr
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs()
+    ], axis=1).max(axis=1)
+    return tr.rolling(window=period, min_periods=1).mean()
 
 def compute_supertrend(df, period=SUPERTREND_PERIOD, multiplier=SUPERTREND_MULTIPLIER):
     atr = compute_atr(df, period)
     hl2 = (df['high'] + df['low']) / 2
     upperband = hl2 + (multiplier * atr)
     lowerband = hl2 - (multiplier * atr)
-    final_upper = upperband.copy()
-    final_lower = lowerband.copy()
+
+    final_upper, final_lower = upperband.copy(), lowerband.copy()
     supertrend = pd.Series(index=df.index, dtype=float)
     direction = pd.Series(index=df.index, dtype=bool)
+
     for i in range(len(df)):
         if i == 0:
             final_upper.iat[i] = upperband.iat[i]
@@ -78,8 +77,10 @@ def compute_supertrend(df, period=SUPERTREND_PERIOD, multiplier=SUPERTREND_MULTI
             supertrend.iat[i] = final_upper.iat[i]
             direction.iat[i] = False
             continue
+
         final_upper.iat[i] = upperband.iat[i] if (upperband.iat[i] < final_upper.iat[i-1] or df['close'].iat[i-1] > final_upper.iat[i-1]) else final_upper.iat[i-1]
         final_lower.iat[i] = lowerband.iat[i] if (lowerband.iat[i] > final_lower.iat[i-1] or df['close'].iat[i-1] < final_lower.iat[i-1]) else final_lower.iat[i-1]
+
         if supertrend.iat[i-1] == final_upper.iat[i-1] and df['close'].iat[i] <= final_upper.iat[i]:
             supertrend.iat[i] = final_upper.iat[i]
             direction.iat[i] = False
@@ -95,6 +96,7 @@ def compute_supertrend(df, period=SUPERTREND_PERIOD, multiplier=SUPERTREND_MULTI
         else:
             direction.iat[i] = df['close'].iat[i] > final_lower.iat[i]
             supertrend.iat[i] = final_lower.iat[i] if direction.iat[i] else final_upper.iat[i]
+
     return direction, atr
 
 def compute_stochastic(df, k_period=STOCH_K, d_period=STOCH_D):
@@ -106,62 +108,98 @@ def compute_stochastic(df, k_period=STOCH_K, d_period=STOCH_D):
     d = k.rolling(window=d_period, min_periods=1).mean()
     return k, d
 
-def is_fresh_signal(df):
-    if len(df) < 50:
-        return None
-    st_dir, atr = compute_supertrend(df)
-    k, d = compute_stochastic(df)
-    cross_up = (k.iloc[-2] < d.iloc[-2]) and (k.iloc[-1] > d.iloc[-1])
-    cross_down = (k.iloc[-2] > d.iloc[-2]) and (k.iloc[-1] < d.iloc[-1])
-    price = df['close'].iloc[-1]
-    signal_price = df['close'].iloc[-2]
-    deviation = abs(price - signal_price) / signal_price if signal_price != 0 else 1
-    atr_latest = atr.iloc[-1]
-    st_is_up = bool(st_dir.iloc[-1])
-    if cross_up and st_is_up and deviation <= FRESH_SIGNAL_MAX_PRICE_DEVIATION:
-        return ('buy', atr_latest)
-    elif cross_down and (not st_is_up) and deviation <= FRESH_SIGNAL_MAX_PRICE_DEVIATION:
-        return ('sell', atr_latest)
-    return None
+# ================== POSITION CHECK ==================
 
-def in_position(symbol):
+def active_trade_exists(symbol):
     try:
         positions = exchange.fetch_positions([symbol])
         for pos in positions:
             contracts = pos.get('contracts') or pos.get('size') or pos.get('positionAmt') or 0
             if float(contracts) != 0:
                 return True
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[active_trade_exists warning] {e}")
     return False
+
+# ================== SIGNALS ==================
+
+def is_fresh_signal(df):
+    if len(df) < 50:
+        return None
+
+    st_dir, atr = compute_supertrend(df)
+    k, d = compute_stochastic(df)
+
+    cross_up = (k.iloc[-2] < d.iloc[-2]) and (k.iloc[-1] > d.iloc[-1])
+    cross_down = (k.iloc[-2] > d.iloc[-2]) and (k.iloc[-1] < d.iloc[-1])
+
+    price = df['close'].iloc[-1]
+    signal_price = df['close'].iloc[-2]
+    deviation = abs(price - signal_price) / signal_price if signal_price != 0 else 1
+
+    atr_latest = atr.iloc[-1]
+    atr_pct = Decimal(str(atr_latest / price * 100)) if price != 0 else Decimal('0')
+
+    try:
+        st_is_up = bool(st_dir.iloc[-1])
+    except Exception:
+        st_is_up = False
+
+    signal = None
+    if cross_up and st_is_up and deviation <= FRESH_SIGNAL_MAX_PRICE_DEVIATION:
+        signal = 'buy'
+    elif cross_down and (not st_is_up) and deviation <= FRESH_SIGNAL_MAX_PRICE_DEVIATION:
+        signal = 'sell'
+    else:
+        price_change = (price - signal_price) / signal_price if signal_price != 0 else 0
+        if st_is_up and price_change > 0.003:
+            signal = 'buy'
+        if (not st_is_up) and price_change < -0.003:
+            signal = 'sell'
+
+    if not signal:
+        return None
+
+    return (signal, atr_latest)
+
+# ================== ORDER EXECUTION ==================
 
 def calculate_tp_sl(entry_price, atr, side):
     entry_price = float(entry_price)
     atr = float(atr)
     tp_multiplier = 1.5
     sl_multiplier = 1.5
+
     if side == 'buy':
         tp_price = entry_price + (atr * tp_multiplier)
         sl_price = entry_price - (atr * sl_multiplier)
     else:
         tp_price = entry_price - (atr * tp_multiplier)
         sl_price = entry_price + (atr * sl_multiplier)
-    return round(tp_price, 8), round(sl_price, 8)
+
+    return float(round(tp_price, 8)), float(round(sl_price, 8))
 
 def place_order(symbol, side, entry_price, atr, qty_override=None):
-    qty = float(qty_override) if qty_override else float(ORDER_SIZE_ETH)
+    qty = float(qty_override) if qty_override is not None else float(ORDER_SIZE_ETH)
     leverage_side = 'LONG' if side == 'buy' else 'SHORT'
+
     try:
         exchange.set_leverage(LEVERAGE, symbol, params={'marginMode': 'cross', 'side': leverage_side})
-    except Exception:
-        pass
-    order_params = {'positionSide': leverage_side, 'newClientOrderId': generate_client_order_id()}
+    except Exception as e:
+        print(f"[Leverage Warning] {e}")
+
     try:
-        exchange.create_order(symbol, 'market', side, qty, None, order_params)
+        order = exchange.create_order(symbol, 'market', side, qty, None, {
+            'positionSide': leverage_side,
+            'newClientOrderId': generate_client_order_id()
+        })
+        print(f"[Order] Market order placed: {order}")
     except Exception as e:
         print(f"[Order Error] {e}")
         return False
+
     tp_price, sl_price = calculate_tp_sl(entry_price, atr, side)
+
     try:
         exchange.create_order(symbol, 'take_profit_market', 'sell' if side == 'buy' else 'buy', qty, None, {
             'triggerPrice': tp_price,
@@ -171,6 +209,7 @@ def place_order(symbol, side, entry_price, atr, qty_override=None):
         })
     except Exception as e:
         print(f"[TP Error] {e}")
+
     try:
         exchange.create_order(symbol, 'stop_market', 'sell' if side == 'buy' else 'buy', qty, None, {
             'triggerPrice': sl_price,
@@ -180,34 +219,41 @@ def place_order(symbol, side, entry_price, atr, qty_override=None):
         })
     except Exception as e:
         print(f"[SL Error] {e}")
+
     open_trades[symbol] = {
         'side': side,
-        'entry_price': entry_price,
+        'entry_price': float(entry_price),
         'qty_total': qty,
         'tp_price': tp_price,
         'sl_price': sl_price,
-        'atr': atr,
+        'atr': float(atr),
         'entry_time': time.time(),
         'leverage_side': leverage_side
     }
     last_trade_time[symbol] = time.time()
-    return True
+    return open_trades[symbol]
+
+# ================== SIGNAL EXECUTION ==================
 
 def signal_strength_and_execute(df):
     base = is_fresh_signal(df)
     if not base:
         return False
     signal, atr = base
+
     vol_now = df['volume'].iloc[-1]
     vol_avg = df['volume'].rolling(window=20, min_periods=1).mean().iloc[-1]
     if vol_now < (MIN_VOLUME_FACTOR * vol_avg):
         return False
-    if in_position(SYMBOL):
-        print("[Position] Already in position, skipping new entry.")
-        return False
-    price = df['close'].iloc[-1]
-    return place_order(SYMBOL, signal, price, atr, qty_override=ORDER_SIZE_ETH)
 
+    if active_trade_exists(SYMBOL):
+        print("[Position] Active trade exists, skipping new entry.")
+        return False
+
+    price = df['close'].iloc[-1]
+    return bool(place_order(SYMBOL, signal, price, atr, qty_override=ORDER_SIZE_ETH))
+
+# ================== MAIN ==================
 if __name__ == '__main__':
     print("🚀 Trading bot started")
     while True:
@@ -217,19 +263,15 @@ if __name__ == '__main__':
                 daily_pnl = Decimal('0')
                 daily_loss_stop = False
                 current_day = today
+
             if not daily_loss_stop:
                 df = fetch_ohlcv(SYMBOL, TIMEFRAME)
                 try:
                     signal_strength_and_execute(df)
                 except Exception as e:
-                    print(f"[Signal Error] {e}")
+                    print(f"[signal exec error] {e}")
+
         except Exception as e:
             print(f"[Main loop error] {e}")
+
         time.sleep(20)
-
-
-
-
-
-
-
