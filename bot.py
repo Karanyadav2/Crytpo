@@ -11,8 +11,8 @@ getcontext().prec = 18
 # ================== CONFIG ===================
 SYMBOL = 'ETH/USDT:USDT'  # only trade ETH/USDT
 TIMEFRAME = '15m'
-ORDER_SIZE_ETH = 0.12  # fixed trade size in ETH
-LEVERAGE = 10
+ORDER_SIZE_ETH = 0.1  # fixed trade size in ETH
+LEVERAGE = 15
 COOLDOWN_PERIOD = 60  # 1 minute cooldown for faster entries
 # Loosened volatility threshold to allow more trades but still avoid extremely low volatility
 VOLATILITY_THRESHOLD_PCT = Decimal('0.02')
@@ -509,3 +509,4 @@ if __name__ == '__main__':
             print(f"[Main loop error] {e}")
 
         time.sleep(20)
+
