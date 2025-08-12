@@ -15,7 +15,7 @@ ORDER_SIZE_ETH = 0.1  # fixed trade size in ETH
 LEVERAGE = 15
 COOLDOWN_PERIOD = 60  # 1 minute cooldown for faster entries
 VOLATILITY_THRESHOLD_PCT = Decimal('0.02')
-FRESH_SIGNAL_MAX_PRICE_DEVIATION = 0.02
+FRESH_SIGNAL_MAX_PRICE_DEVIATION = 0.04
 PARTIAL_TP_RATIO = Decimal('0.5')
 TRAIL_ATR_MULTIPLIER = Decimal('1.2')
 TIME_BASED_EXIT_HOURS = 12
@@ -315,6 +315,7 @@ if __name__ == '__main__':
             print(f"[Main Error] {e}")
 
         time.sleep(20)
+
 
 
 
