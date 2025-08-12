@@ -220,8 +220,8 @@ def signal_strength_and_execute(df):
 def calculate_tp_sl(entry_price, atr, side):
     entry_price = float(entry_price)
     atr = float(atr)
-    tp_multiplier = 1.5
-    sl_multiplier = 1.5
+    tp_multiplier = 2
+    sl_multiplier = 2
 
     if side == 'buy':
         tp_price = entry_price + (atr * tp_multiplier)
@@ -315,6 +315,7 @@ if __name__ == '__main__':
             print(f"[Main Error] {e}")
 
         time.sleep(20)
+
 
 
 
