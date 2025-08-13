@@ -27,7 +27,7 @@ STOCH_D = 3
 MIN_VOLUME_FACTOR = 0.2
 
 exchange = ccxt.bingx({
-    'apiKey': 'wGY6iowJ9qdr1idLbKOj81EGhhZe5O8dqqZlyBiSjiEZnuZUDULsAW30m4eFaZOu35n5zQktN7a01wKoeS',
+    'apiKey': 'wGY6iowJ9qdr1idLbKOj81EGhhZe5O8dqqZlyBiSjiEZnuZUDULsAW30m4eFaZOu35n5zQktN7a01wKoeSg',
     'secret': 'tqxcIVDdDJm2GWjinyBJH4EbvJrjIuOVyi7mnKOzhXHquFPNcULqMAOvmSy0pyuoPOAyCzE2zudzEmlwnA',
     'enableRateLimit': True,
     'options': {
@@ -315,6 +315,7 @@ if __name__ == '__main__':
             print(f"[Main Error] {e}")
 
         time.sleep(20)
+
 
 
 
