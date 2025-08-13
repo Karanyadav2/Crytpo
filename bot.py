@@ -25,6 +25,8 @@ SUPERTREND_MULTIPLIER = 3.0
 STOCH_K = 14
 STOCH_D = 3
 MIN_VOLUME_FACTOR = 0.2
+STRONG_TREND_ATR_MULT = 1.0  # Price distance from last entry in ATRs for re-entry
+REENTRY_MIN_DELAY = 300  # seconds before allowing another re-entry in same trend
 
 exchange = ccxt.bingx({
     'apiKey': 'wGY6iowJ9qdr1idLbKOj81EGhhZe5O8dqqZlyBiSjiEZnuZUDULsAW30m4eFaZOu35n5zQktN7a01wKoeSg',
@@ -40,6 +42,7 @@ open_trades = {}
 daily_pnl = Decimal('0')
 daily_loss_stop = False
 current_day = datetime.date.today()
+last_signal_dir = None  # 'buy' or 'sell'
 
 # ================== HELPERS ==================
 
@@ -118,7 +121,9 @@ def compute_stochastic(df, k_period=STOCH_K, d_period=STOCH_D):
 
 # ================== SIGNALS ==================
 
-def is_fresh_signal(df):
+def is_fresh_or_strong_signal(df):
+    global last_signal_dir, last_trade_time
+
     if len(df) < 50:
         print("📉 Not enough data to generate signals.")
         return None
@@ -135,9 +140,6 @@ def is_fresh_signal(df):
 
     atr_latest = atr.iloc[-1]
     atr_pct = Decimal(str(atr_latest / price * 100)) if price != 0 else Decimal('0')
-
-    if atr_pct < VOLATILITY_THRESHOLD_PCT:
-        print("🔇 ATR% below threshold — continuing under relaxed rule")
 
     try:
         st_is_up = bool(st_dir.iloc[-1])
@@ -156,10 +158,24 @@ def is_fresh_signal(df):
         if (not st_is_up) and price_change < -0.003:
             signal = 'sell'
 
+    # Strong trend re-entry check
+    if not signal and last_signal_dir is not None:
+        if st_is_up and last_signal_dir == 'buy':
+            if price > open_trades.get(SYMBOL, {}).get('entry_price', 0) + (atr_latest * STRONG_TREND_ATR_MULT):
+                if time.time() - last_trade_time[SYMBOL] > REENTRY_MIN_DELAY:
+                    print("⚡ Strong BUY trend — re-entry allowed")
+                    signal = 'buy'
+        elif (not st_is_up) and last_signal_dir == 'sell':
+            if price < open_trades.get(SYMBOL, {}).get('entry_price', 1e9) - (atr_latest * STRONG_TREND_ATR_MULT):
+                if time.time() - last_trade_time[SYMBOL] > REENTRY_MIN_DELAY:
+                    print("⚡ Strong SELL trend — re-entry allowed")
+                    signal = 'sell'
+
     if not signal:
         print("🚫 No valid signal.")
         return None
 
+    last_signal_dir = signal
     return (signal, atr_latest)
 
 # ================== POSITION HELPERS ==================
@@ -178,7 +194,7 @@ def in_position(symbol):
 # ================== EXECUTION ==================
 
 def signal_strength_and_execute(df):
-    base = is_fresh_signal(df)
+    base = is_fresh_or_strong_signal(df)
     if not base:
         return False
     signal, atr = base
@@ -205,11 +221,6 @@ def signal_strength_and_execute(df):
     atr_pct = Decimal(str(atr_val / price * 100)) if price != 0 else Decimal('0')
     if atr_pct < VOLATILITY_THRESHOLD_PCT:
         print("🔇 Low volatility — allowed")
-
-    # **NEW CHECK**
-    if in_position(SYMBOL):
-        print("[Position] Active position exists, skipping new trade")
-        return False
 
     trade_meta = place_order(SYMBOL, signal, price, atr_val, qty_override=ORDER_SIZE_ETH)
     if trade_meta:
@@ -315,8 +326,6 @@ if __name__ == '__main__':
             print(f"[Main Error] {e}")
 
         time.sleep(20)
-
-
 
 
 
