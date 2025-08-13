@@ -158,7 +158,7 @@ def is_fresh_or_strong_signal(df):
         if (not st_is_up) and price_change < -0.003:
             signal = 'sell'
 
-    # Strong trend re-entry check
+    # Strong trend re-entry check (only suggests a signal; actual entry still blocked if position is open)
     if not signal and last_signal_dir is not None:
         if st_is_up and last_signal_dir == 'buy':
             if price > open_trades.get(SYMBOL, {}).get('entry_price', 0) + (atr_latest * STRONG_TREND_ATR_MULT):
@@ -221,6 +221,11 @@ def signal_strength_and_execute(df):
     atr_pct = Decimal(str(atr_val / price * 100)) if price != 0 else Decimal('0')
     if atr_pct < VOLATILITY_THRESHOLD_PCT:
         print("🔇 Low volatility — allowed")
+
+    # >>> STRICT ACTIVE-POSITION SAFETY (restored) <<<
+    if in_position(SYMBOL):
+        print("[Position] Active position exists, skipping new trade")
+        return False
 
     trade_meta = place_order(SYMBOL, signal, price, atr_val, qty_override=ORDER_SIZE_ETH)
     if trade_meta:
@@ -326,13 +331,4 @@ if __name__ == '__main__':
             print(f"[Main Error] {e}")
 
         time.sleep(20)
-
-
-
-
-
-
-
-
-
 
