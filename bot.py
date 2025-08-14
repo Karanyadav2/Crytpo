@@ -11,9 +11,9 @@ getcontext().prec = 18
 # ================== CONFIG ===================
 SYMBOL = 'ETH/USDT:USDT'  # only trade ETH/USDT
 TIMEFRAME = '1h'
-ORDER_SIZE_ETH = 0.1  # fixed trade size in ETH
+ORDER_SIZE_ETH = 0.1
 LEVERAGE = 15
-COOLDOWN_PERIOD = 60  # 1 minute cooldown for faster entries
+COOLDOWN_PERIOD = 60
 VOLATILITY_THRESHOLD_PCT = Decimal('0.02')
 FRESH_SIGNAL_MAX_PRICE_DEVIATION = 0.1
 PARTIAL_TP_RATIO = Decimal('0.5')
@@ -25,8 +25,9 @@ SUPERTREND_MULTIPLIER = 3.0
 STOCH_K = 14
 STOCH_D = 3
 MIN_VOLUME_FACTOR = 0.2
-STRONG_TREND_ATR_MULT = 1.0  # Price distance from last entry in ATRs for re-entry
-REENTRY_MIN_DELAY = 300  # seconds before allowing another re-entry in same trend
+STRONG_TREND_ATR_MULT = 1.5
+REENTRY_MIN_DELAY = 300
+ATR_CHOPPY_THRESHOLD = Decimal('0.15')  # New filter for choppy/weak markets
 
 exchange = ccxt.bingx({
     'apiKey': 'wGY6iowJ9qdr1idLbKOj81EGhhZe5O8dqqZlyBiSjiEZnuZUDULsAW30m4eFaZOu35n5zQktN7a01wKoeSg',
@@ -42,7 +43,7 @@ open_trades = {}
 daily_pnl = Decimal('0')
 daily_loss_stop = False
 current_day = datetime.date.today()
-last_signal_dir = None  # 'buy' or 'sell'
+last_signal_dir = None
 
 # ================== HELPERS ==================
 
@@ -141,6 +142,11 @@ def is_fresh_or_strong_signal(df):
     atr_latest = atr.iloc[-1]
     atr_pct = Decimal(str(atr_latest / price * 100)) if price != 0 else Decimal('0')
 
+    # Avoid weak/choppy markets
+    if atr_pct < ATR_CHOPPY_THRESHOLD:
+        print(f"⚠️ ATR {atr_pct:.2f}% < {ATR_CHOPPY_THRESHOLD}% — skipping trade")
+        return None
+
     try:
         st_is_up = bool(st_dir.iloc[-1])
     except Exception:
@@ -158,7 +164,6 @@ def is_fresh_or_strong_signal(df):
         if (not st_is_up) and price_change < -0.003:
             signal = 'sell'
 
-    # Strong trend re-entry check (only suggests a signal; actual entry still blocked if position is open)
     if not signal and last_signal_dir is not None:
         if st_is_up and last_signal_dir == 'buy':
             if price > open_trades.get(SYMBOL, {}).get('entry_price', 0) + (atr_latest * STRONG_TREND_ATR_MULT):
@@ -216,18 +221,11 @@ def signal_strength_and_execute(df):
         print("[Score] Too low, skipping")
         return False
 
-    price = df['close'].iloc[-1]
-    atr_val = compute_atr(df).iloc[-1]
-    atr_pct = Decimal(str(atr_val / price * 100)) if price != 0 else Decimal('0')
-    if atr_pct < VOLATILITY_THRESHOLD_PCT:
-        print("🔇 Low volatility — allowed")
-
-    # >>> STRICT ACTIVE-POSITION SAFETY (restored) <<<
     if in_position(SYMBOL):
         print("[Position] Active position exists, skipping new trade")
         return False
 
-    trade_meta = place_order(SYMBOL, signal, price, atr_val, qty_override=ORDER_SIZE_ETH)
+    trade_meta = place_order(SYMBOL, signal, df['close'].iloc[-1], atr, qty_override=ORDER_SIZE_ETH)
     if trade_meta:
         print(f"✅ {signal.upper()} {SYMBOL} placed")
         return True
@@ -236,31 +234,20 @@ def signal_strength_and_execute(df):
 def calculate_tp_sl(entry_price, atr, side):
     entry_price = float(entry_price)
     atr = float(atr)
-    tp_multiplier = 1
-    sl_multiplier = 1.2
-
-    if side == 'buy':
-        tp_price = entry_price + (atr * tp_multiplier)
-        sl_price = entry_price - (atr * sl_multiplier)
-    else:
-        tp_price = entry_price - (atr * tp_multiplier)
-        sl_price = entry_price + (atr * sl_multiplier)
-
+    tp_price = entry_price + (atr if side == 'buy' else -atr)
+    sl_price = entry_price - (atr * 1.2 if side == 'buy' else -atr * 1.2)
     return float(round(tp_price, 8)), float(round(sl_price, 8))
 
 def place_order(symbol, side, entry_price, atr, qty_override=None):
     qty = float(qty_override) if qty_override is not None else float(ORDER_SIZE_ETH)
-
     leverage_side = 'LONG' if side == 'buy' else 'SHORT'
+
     try:
         exchange.set_leverage(LEVERAGE, symbol, params={'marginMode': 'cross', 'side': leverage_side})
     except Exception as e:
         print(f"[Leverage Warning] {e}")
 
-    order_params = {
-        'positionSide': leverage_side,
-        'newClientOrderId': generate_client_order_id()
-    }
+    order_params = {'positionSide': leverage_side, 'newClientOrderId': generate_client_order_id()}
 
     try:
         order = exchange.create_order(symbol, 'market', side, qty, None, order_params)
@@ -272,16 +259,28 @@ def place_order(symbol, side, entry_price, atr, qty_override=None):
         return False
 
     tp_price, sl_price = calculate_tp_sl(entry_price, atr, side)
+    partial_tp_price = entry_price + (float(atr) * 0.5 if side == 'buy' else -float(atr) * 0.5)
+    partial_qty = qty / 2
 
     try:
-        exchange.create_order(symbol, 'take_profit_market', 'sell' if side == 'buy' else 'buy', qty, None, {
+        exchange.create_order(symbol, 'take_profit_market', 'sell' if side == 'buy' else 'buy', partial_qty, None, {
+            'triggerPrice': partial_tp_price,
+            'stopPrice': partial_tp_price,
+            'positionSide': leverage_side,
+            'newClientOrderId': generate_client_order_id()
+        })
+    except Exception as e:
+        print(f"[Partial TP Error] {e}")
+
+    try:
+        exchange.create_order(symbol, 'take_profit_market', 'sell' if side == 'buy' else 'buy', qty - partial_qty, None, {
             'triggerPrice': tp_price,
             'stopPrice': tp_price,
             'positionSide': leverage_side,
             'newClientOrderId': generate_client_order_id()
         })
     except Exception as e:
-        print(f"[TP Error] {e}")
+        print(f"[Full TP Error] {e}")
 
     try:
         exchange.create_order(symbol, 'stop_market', 'sell' if side == 'buy' else 'buy', qty, None, {
@@ -297,7 +296,8 @@ def place_order(symbol, side, entry_price, atr, qty_override=None):
         'side': side,
         'entry_price': float(entry_price),
         'qty_total': qty,
-        'tp1_price': tp_price,
+        'tp1_price': partial_tp_price,
+        'tp2_price': tp_price,
         'sl_price': sl_price,
         'atr': float(atr),
         'entry_time': time.time(),
@@ -326,11 +326,6 @@ if __name__ == '__main__':
                     signal_strength_and_execute(df)
                 except Exception as e:
                     print(f"[Signal Error] {e}")
-
         except Exception as e:
             print(f"[Main Error] {e}")
-
         time.sleep(20)
-
-
-
