@@ -25,7 +25,7 @@ SUPERTREND_MULTIPLIER = 3.0
 STOCH_K = 14
 STOCH_D = 3
 MIN_VOLUME_FACTOR = 0.2
-STRONG_TREND_ATR_MULT = 1.5
+STRONG_TREND_ATR_MULT = 1.8
 REENTRY_MIN_DELAY = 300
 ATR_CHOPPY_THRESHOLD = Decimal('0.15')  # New filter for choppy/weak markets
 
@@ -329,4 +329,5 @@ if __name__ == '__main__':
         except Exception as e:
             print(f"[Main Error] {e}")
         time.sleep(20)
+
 
