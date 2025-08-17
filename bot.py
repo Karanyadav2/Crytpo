@@ -234,8 +234,8 @@ def signal_strength_and_execute(df):
 def calculate_tp_sl(entry_price, atr, side):
     entry_price = float(entry_price)
     atr = float(atr)
-    tp_price = entry_price + (atr if side == 'buy' else -atr)
-    sl_price = entry_price - (atr * 1.2 if side == 'buy' else -atr * 1.2)
+    tp_price = entry_price + (atr * 1.5 if side == 'buy' else -atr * 1.5)
+    sl_price = entry_price - (atr * 1.8 if side == 'buy' else -atr * 1.8)
     return float(round(tp_price, 8)), float(round(sl_price, 8))
 
 def place_order(symbol, side, entry_price, atr, qty_override=None):
@@ -259,7 +259,7 @@ def place_order(symbol, side, entry_price, atr, qty_override=None):
         return False
 
     tp_price, sl_price = calculate_tp_sl(entry_price, atr, side)
-    partial_tp_price = entry_price + (float(atr) * 0.5 if side == 'buy' else -float(atr) * 0.5)
+    partial_tp_price = entry_price + (float(atr) * 0.8 if side == 'buy' else -float(atr) * 0.8)
     partial_qty = qty / 2
 
     try:
@@ -329,3 +329,4 @@ if __name__ == '__main__':
         except Exception as e:
             print(f"[Main Error] {e}")
         time.sleep(20)
+
