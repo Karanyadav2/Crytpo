@@ -22,8 +22,12 @@ TIME_BASED_EXIT_HOURS = 12
 MAX_DAILY_LOSS_PCT = Decimal('0.05')
 SUPERTREND_PERIOD = 10
 SUPERTREND_MULTIPLIER = 3.0
-STOCH_K = 14
-STOCH_D = 3
+# --- Replaced Stochastic with MACD + ADX ---
+MACD_FAST = 12
+MACD_SLOW = 26
+MACD_SIGNAL = 9
+ADX_PERIOD = 14
+ADX_THRESHOLD = 20.0
 MIN_VOLUME_FACTOR = 0.2
 STRONG_TREND_ATR_MULT = 1.8
 REENTRY_MIN_DELAY = 300
@@ -111,14 +115,41 @@ def compute_supertrend(df, period=SUPERTREND_PERIOD, multiplier=SUPERTREND_MULTI
 
     return direction, atr
 
-def compute_stochastic(df, k_period=STOCH_K, d_period=STOCH_D):
-    low_min = df['low'].rolling(window=k_period, min_periods=1).min()
-    high_max = df['high'].rolling(window=k_period, min_periods=1).max()
-    denom = (high_max - low_min).replace(0, np.nan)
-    k = 100 * (df['close'] - low_min) / denom
-    k = k.fillna(50)
-    d = k.rolling(window=d_period, min_periods=1).mean()
-    return k, d
+# --- New: MACD ---
+
+def compute_macd(df, fast=MACD_FAST, slow=MACD_SLOW, signal=MACD_SIGNAL):
+    close = df['close']
+    ema_fast = close.ewm(span=fast, adjust=False).mean()
+    ema_slow = close.ewm(span=slow, adjust=False).mean()
+    macd_line = ema_fast - ema_slow
+    macd_signal = macd_line.ewm(span=signal, adjust=False).mean()
+    macd_hist = macd_line - macd_signal
+    return macd_line, macd_signal, macd_hist
+
+# --- New: ADX ---
+
+def compute_adx(df, period=ADX_PERIOD):
+    high = df['high']
+    low = df['low']
+    close = df['close']
+
+    plus_dm = (high.diff())
+    minus_dm = (-low.diff())
+    plus_dm[plus_dm < 0] = 0
+    minus_dm[minus_dm < 0] = 0
+
+    tr1 = (high - low)
+    tr2 = (high - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    atr = tr.rolling(window=period, min_periods=1).sum()
+    plus_di = 100 * (plus_dm.rolling(window=period, min_periods=1).sum() / atr.replace(0, np.nan))
+    minus_di = 100 * (minus_dm.rolling(window=period, min_periods=1).sum() / atr.replace(0, np.nan))
+
+    dx = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)).fillna(0)
+    adx = dx.rolling(window=period, min_periods=1).mean()
+    return adx, plus_di, minus_di
 
 # ================== SIGNALS ==================
 
@@ -130,10 +161,12 @@ def is_fresh_or_strong_signal(df):
         return None
 
     st_dir, atr = compute_supertrend(df)
-    k, d = compute_stochastic(df)
+    macd_line, macd_signal, macd_hist = compute_macd(df)
+    adx, plus_di, minus_di = compute_adx(df)
 
-    cross_up = (k.iloc[-2] < d.iloc[-2]) and (k.iloc[-1] > d.iloc[-1])
-    cross_down = (k.iloc[-2] > d.iloc[-2]) and (k.iloc[-1] < d.iloc[-1])
+    # MACD cross
+    cross_up = (macd_line.iloc[-2] < macd_signal.iloc[-2]) and (macd_line.iloc[-1] > macd_signal.iloc[-1])
+    cross_down = (macd_line.iloc[-2] > macd_signal.iloc[-2]) and (macd_line.iloc[-1] < macd_signal.iloc[-1])
 
     price = df['close'].iloc[-1]
     signal_price = df['close'].iloc[-2]
@@ -142,9 +175,14 @@ def is_fresh_or_strong_signal(df):
     atr_latest = atr.iloc[-1]
     atr_pct = Decimal(str(atr_latest / price * 100)) if price != 0 else Decimal('0')
 
-    # Avoid weak/choppy markets
+    # Avoid weak/choppy markets (ATR) and require trend strength via ADX
     if atr_pct < ATR_CHOPPY_THRESHOLD:
         print(f"⚠️ ATR {atr_pct:.2f}% < {ATR_CHOPPY_THRESHOLD}% — skipping trade")
+        return None
+
+    current_adx = float(adx.iloc[-1])
+    if current_adx < ADX_THRESHOLD:
+        print(f"⚠️ ADX {current_adx:.1f} < {ADX_THRESHOLD} — skipping trade")
         return None
 
     try:
@@ -159,20 +197,20 @@ def is_fresh_or_strong_signal(df):
         signal = 'sell'
     else:
         price_change = (price - signal_price) / signal_price if signal_price != 0 else 0
-        if st_is_up and price_change > 0.003:
+        if st_is_up and price_change > 0.003 and macd_hist.iloc[-1] > 0:
             signal = 'buy'
-        if (not st_is_up) and price_change < -0.003:
+        if (not st_is_up) and price_change < -0.003 and macd_hist.iloc[-1] < 0:
             signal = 'sell'
 
     if not signal and last_signal_dir is not None:
         if st_is_up and last_signal_dir == 'buy':
             if price > open_trades.get(SYMBOL, {}).get('entry_price', 0) + (atr_latest * STRONG_TREND_ATR_MULT):
-                if time.time() - last_trade_time[SYMBOL] > REENTRY_MIN_DELAY:
+                if time.time() - last_trade_time[SYMBOL] > REENTRY_MIN_DELAY and macd_hist.iloc[-1] > 0:
                     print("⚡ Strong BUY trend — re-entry allowed")
                     signal = 'buy'
         elif (not st_is_up) and last_signal_dir == 'sell':
             if price < open_trades.get(SYMBOL, {}).get('entry_price', 1e9) - (atr_latest * STRONG_TREND_ATR_MULT):
-                if time.time() - last_trade_time[SYMBOL] > REENTRY_MIN_DELAY:
+                if time.time() - last_trade_time[SYMBOL] > REENTRY_MIN_DELAY and macd_hist.iloc[-1] < 0:
                     print("⚡ Strong SELL trend — re-entry allowed")
                     signal = 'sell'
 
@@ -210,10 +248,11 @@ def signal_strength_and_execute(df):
         print("[Volume] Below threshold, skipping")
         return False
 
+    # Scoring logic preserved; replaced Stochastic magnitude with MACD histogram magnitude
     score = 0.4
-    k, d = compute_stochastic(df)
-    cross_magnitude = abs(k.iloc[-1] - d.iloc[-1]) / 100.0
-    score += min(0.4, float(cross_magnitude * 0.4))
+    macd_line, macd_signal, macd_hist = compute_macd(df)
+    cross_magnitude = abs(macd_line.iloc[-1] - macd_signal.iloc[-1])  # unbounded; capped below
+    score += min(0.4, float(min(1.0, cross_magnitude) * 0.4))
     vol_factor = min(1.0, float(vol_now / (vol_avg + 1e-9)))
     score += 0.2 * vol_factor
 
@@ -329,5 +368,8 @@ if __name__ == '__main__':
         except Exception as e:
             print(f"[Main Error] {e}")
         time.sleep(20)
+
+        time.sleep(20)
+
 
 
