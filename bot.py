@@ -178,12 +178,12 @@ def is_fresh_or_strong_signal(df):
 
     # Avoid weak/choppy markets (ATR) and require trend strength via ADX
     if atr_pct < ATR_CHOPPY_THRESHOLD:
-        print(f"⚠️ ATR {atr_pct:.2f}% < {ATR_CHOPPY_THRESHOLD}% — skipping trade" + signal)
+        print(f"⚠️ ATR {atr_pct:.2f}% < {ATR_CHOPPY_THRESHOLD}% — skipping trade")
         return None
 
     current_adx = float(adx.iloc[-1])
     if current_adx < ADX_THRESHOLD:
-        print(f"⚠️ ADX {current_adx:.1f} < {ADX_THRESHOLD} — skipping trade" + signal)
+        print(f"⚠️ ADX {current_adx:.1f} < {ADX_THRESHOLD} — skipping trade")
         return None
 
     try:
@@ -373,6 +373,7 @@ if __name__ == '__main__':
         time.sleep(20)
 
         time.sleep(20)
+
 
 
 
