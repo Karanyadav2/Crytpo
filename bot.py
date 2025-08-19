@@ -188,6 +188,8 @@ def is_fresh_or_strong_signal(df):
 
     try:
         st_is_up = bool(st_dir.iloc[-1])
+
+
     except Exception:
         st_is_up = False
 
@@ -246,7 +248,7 @@ def signal_strength_and_execute(df):
     vol_now = df['volume'].iloc[-1]
     vol_avg = df['volume'].rolling(window=20, min_periods=1).mean().iloc[-1]
     if vol_now < (MIN_VOLUME_FACTOR * vol_avg):
-        print("[Volume] Below threshold, skipping")
+        print("[Volume] Below threshold, skipping  " + signal)
         return False
 
     # Scoring logic preserved; replaced Stochastic magnitude with MACD histogram magnitude
@@ -258,11 +260,11 @@ def signal_strength_and_execute(df):
     score += 0.2 * vol_factor
 
     if score < 0.25:
-        print("[Score] Too low, skipping")
+        print("[Score] Too low, skipping  "+ signal)
         return False
 
     if in_position(SYMBOL):
-        print("[Position] Active position exists, skipping new trade")
+        print("[Position] Active position exists, skipping new trade  "+ signal)
         return False
 
     trade_meta = place_order(SYMBOL, signal, df['close'].iloc[-1], atr, qty_override=ORDER_SIZE_ETH)
@@ -371,6 +373,7 @@ if __name__ == '__main__':
         time.sleep(20)
 
         time.sleep(20)
+
 
 
 
