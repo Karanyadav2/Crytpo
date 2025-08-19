@@ -10,7 +10,7 @@ getcontext().prec = 18
 
 # ================== CONFIG ===================
 SYMBOL = 'ETH/USDT:USDT'  # only trade ETH/USDT
-TIMEFRAME = '15m'
+TIMEFRAME = '1h'
 ORDER_SIZE_ETH = 0.06
 
 LEVERAGE = 18
@@ -373,6 +373,7 @@ if __name__ == '__main__':
         time.sleep(20)
 
         time.sleep(20)
+
 
 
 
