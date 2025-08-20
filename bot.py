@@ -65,7 +65,7 @@ def fetch_ohlcv(symbol, timeframe, limit=200):
 # ================== INDICATORS ==================
 
 def compute_atr(df, period=14):
-    high = df['high']ad
+    high = df['high']
     low = df['low']
     close = df['close']
     prev_close = close.shift(1)
@@ -373,6 +373,7 @@ if __name__ == '__main__':
         time.sleep(20)
 
         time.sleep(20)
+
 
 
 
