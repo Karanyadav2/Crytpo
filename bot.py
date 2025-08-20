@@ -28,7 +28,7 @@ MACD_FAST = 12
 MACD_SLOW = 26
 MACD_SIGNAL = 9
 ADX_PERIOD = 14
-ADX_THRESHOLD = 20.0
+ADX_THRESHOLD = 18
 MIN_VOLUME_FACTOR = 0.2
 STRONG_TREND_ATR_MULT = 1.8
 REENTRY_MIN_DELAY = 300
@@ -65,7 +65,7 @@ def fetch_ohlcv(symbol, timeframe, limit=200):
 # ================== INDICATORS ==================
 
 def compute_atr(df, period=14):
-    high = df['high']
+    high = df['high']ad
     low = df['low']
     close = df['close']
     prev_close = close.shift(1)
@@ -373,6 +373,7 @@ if __name__ == '__main__':
         time.sleep(20)
 
         time.sleep(20)
+
 
 
 
