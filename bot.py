@@ -11,7 +11,7 @@ getcontext().prec = 18
 # ================== CONFIG ===================
 SYMBOL = 'ETH/USDT:USDT'  # only trade ETH/USDT
 TIMEFRAME = '15m'
-ORDER_SIZE_ETH = 0.06
+ORDER_SIZE_ETH = 0.01
 
 LEVERAGE = 20
 COOLDOWN_PERIOD = 60
@@ -35,8 +35,8 @@ REENTRY_MIN_DELAY = 300
 ATR_CHOPPY_THRESHOLD = Decimal('0.15')  # New filter for choppy/weak markets
 
 exchange = ccxt.bingx({
-    'apiKey': 'wGY6iowJ9qdr1idLbKOj81EGhhZe5O8dqqZlyBiSjiEZnuZUDULsAW30m4eFaZOu35n5zQktN7a01wKoeSg',
-    'secret': 'tqxcIVDdDJm2GWjinyBJH4EbvJrjIuOVyi7mnKOzhXHquFPNcULqMAOvmSy0pyuoPOAyCzE2zudzEmlwnA',
+    'apiKey': '5mhPjkTlc4oFILGyuzkdFwfulNwTVMpSAaWcRoKlNtccdFgwemn18a02Lc7ptVI6QxTUxHuMe38CLYN43tCQ',
+    'secret': 'cSMIhkp7BhDaMJETF6MHNHvIu8e5T69QsCDzS7h6TA9WBttWFWfbWY9g7xtbwD7davWhALqnPHylid9fLPO7A',
     'enableRateLimit': True,
     'options': {
         'defaultType': 'swap',
@@ -373,6 +373,7 @@ if __name__ == '__main__':
         time.sleep(20)
 
         time.sleep(20)
+
 
 
 
