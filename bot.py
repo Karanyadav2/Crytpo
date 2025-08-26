@@ -17,7 +17,7 @@ QTY_ROUND_DECIMALS = 2  # round qty to 2 decimals
 
 LEVERAGE = 20
 COOLDOWN_PERIOD = 60
-VOLATILITY_THRESHOLD_PCT = Decimal('0.02')
+VOLATILITY_THRESHOLD_PCT = Decimal('0.04')
 FRESH_SIGNAL_MAX_PRICE_DEVIATION = 0.1
 PARTIAL_TP_RATIO = Decimal('0.5')
 TRAIL_ATR_MULTIPLIER = Decimal('1.2')
@@ -434,6 +434,7 @@ if __name__ == '__main__':
         time.sleep(20)
 
         time.sleep(20)
+
 
 
 
