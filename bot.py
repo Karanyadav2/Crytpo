@@ -38,8 +38,8 @@ ATR_CHOPPY_THRESHOLD = Decimal('0.15')  # New filter for choppy/weak markets
 
 # === Only change: switch from BingX to Bybit (futures / swap) ===
 exchange = ccxt.bybit({
-    'apiKey': 'YOUR_BYBIT_API_KEY',
-    'secret': 'YOUR_BYBIT_SECRET',
+    'apiKey': 'kUjPvWmIIvbBxPYDXS',
+    'secret': 'lWy3BCYftFohf9ilQjEyWVJlxctumbnJJTvU',
     'enableRateLimit': True,
     'options': {
         'defaultType': 'swap',  # use linear perpetuals
@@ -440,5 +440,6 @@ if __name__ == '__main__':
         time.sleep(20)
 
         time.sleep(20)
+
 
 
