@@ -11,7 +11,9 @@ getcontext().prec = 18
 # ================== CONFIG ===================
 SYMBOL = 'ETH/USDT:USDT'  # only trade ETH/USDT
 TIMEFRAME = '15m'
-ORDER_SIZE_ETH = 0.01
+ORDER_SIZE_ETH = 0.02  # set >= 0.02 so partial TP (half) is >= Bybit min 0.01
+MIN_QTY = 0.01  # Bybit minimum quantity for ETH/USDT
+QTY_ROUND_DECIMALS = 2  # round qty to 2 decimals
 
 LEVERAGE = 20
 COOLDOWN_PERIOD = 60
@@ -36,13 +38,19 @@ ATR_CHOPPY_THRESHOLD = Decimal('0.15')  # New filter for choppy/weak markets
 
 # === Only change: switch from BingX to Bybit (futures / swap) ===
 exchange = ccxt.bybit({
-    'apiKey': 'kUjPvWmIIvbBxPYDXS',
-    'secret': 'lWy3BCYftFohf9ilQjEyWVJlxctumbnJJTvU',
+    'apiKey': 'YOUR_BYBIT_API_KEY',
+    'secret': 'YOUR_BYBIT_SECRET',
     'enableRateLimit': True,
     'options': {
         'defaultType': 'swap',  # use linear perpetuals
     }
 })
+
+# try to set leverage (some ccxt versions require params differently)
+try:
+    exchange.set_leverage(LEVERAGE, SYMBOL)
+except Exception as e:
+    print(f"[Leverage setup warning] {e}")
 
 last_trade_time = {SYMBOL: 0}
 open_trades = {}
@@ -63,6 +71,71 @@ def fetch_ohlcv(symbol, timeframe, limit=200):
     df.set_index('timestamp', inplace=True)
     return df
 
+
+def _round_qty(qty):
+    # ensure qty respects Bybit minimum and precision
+    q = round(qty, QTY_ROUND_DECIMALS)
+    if q < MIN_QTY:
+        return MIN_QTY
+    return q
+
+
+def place_limit_tp(symbol, side, qty, price, client_tag=None):
+    """Place a reduce-only limit order to act as TP. We include triggerDirection param (ascending/descending)
+    for Bybit. For buys (we hold a long), TP triggers when price rises -> 'ascending'. For shorts, TP triggers when price falls -> 'descending'."""
+    qty = _round_qty(qty)
+    params = {
+        'reduceOnly': True,
+        'newClientOrderId': client_tag or generate_client_order_id(),
+    }
+    try:
+        if side == 'buy':
+            # we're placing a sell limit to take profit on a long
+            resp = exchange.create_order(symbol, 'limit', 'sell', qty, price, params)
+        else:
+            # placing a buy limit to take profit on a short
+            resp = exchange.create_order(symbol, 'limit', 'buy', qty, price, params)
+        return resp
+    except Exception as e:
+        print(f"[TP order error] {e}")
+        return None
+
+
+def place_stop_loss(symbol, side, qty, trigger_price, stop_price, client_tag=None):
+    """Place a stop/stop-market order as SL. We include triggerDirection param (ascending/descending) as required by Bybit.
+    For a long (side='buy'), stop should trigger when price descends -> 'descending'. For a short, trigger when price ascends -> 'ascending'.
+    We attempt to use ccxt's stop order by creating type 'stop_market' first and fall back to 'stop'.
+    """
+    qty = _round_qty(qty)
+    trigger_direction = 'descending' if side == 'buy' else 'ascending'
+    params = {
+        'reduceOnly': True,
+        'newClientOrderId': client_tag or generate_client_order_id(),
+        'triggerDirection': trigger_direction,
+    }
+    # Try stop-market first
+    try:
+        params_with_trigger = params.copy()
+        params_with_trigger.update({'triggerPrice': trigger_price, 'stopPrice': stop_price})
+        if side == 'buy':
+            resp = exchange.create_order(symbol, 'stop_market', 'sell', qty, None, params_with_trigger)
+        else:
+            resp = exchange.create_order(symbol, 'stop_market', 'buy', qty, None, params_with_trigger)
+        return resp
+    except Exception as e_stop_market:
+        print(f"[stop_market failed] {e_stop_market} — trying 'stop' order type")
+        try:
+            params_with_trigger = params.copy()
+            params_with_trigger.update({'triggerPrice': trigger_price, 'stopPrice': stop_price})
+            if side == 'buy':
+                resp = exchange.create_order(symbol, 'stop', 'sell', qty, stop_price, params_with_trigger)
+            else:
+                resp = exchange.create_order(symbol, 'stop', 'buy', qty, stop_price, params_with_trigger)
+            return resp
+        except Exception as e_stop:
+            print(f"[stop order failed] {e_stop}")
+            return None
+
 # ================== INDICATORS ==================
 
 def compute_atr(df, period=14):
@@ -76,6 +149,7 @@ def compute_atr(df, period=14):
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     atr = tr.rolling(window=period, min_periods=1).mean()
     return atr
+
 
 def compute_supertrend(df, period=SUPERTREND_PERIOD, multiplier=SUPERTREND_MULTIPLIER):
     atr = compute_atr(df, period)
@@ -290,8 +364,9 @@ def place_order(symbol, side, entry_price, atr, qty_override=None):
 
     order_params = {'positionSide': leverage_side, 'newClientOrderId': generate_client_order_id()}
 
+    # Entry market order
     try:
-        order = exchange.create_order(symbol, 'market', side, qty, None, order_params)
+        order = exchange.create_order(symbol, 'market', side, _round_qty(qty), None, order_params)
     except ccxt.InsufficientFunds as e:
         print(f"[FAILURE] {e}")
         return False
@@ -301,35 +376,28 @@ def place_order(symbol, side, entry_price, atr, qty_override=None):
 
     tp_price, sl_price = calculate_tp_sl(entry_price, atr, side)
     partial_tp_price = entry_price + (float(atr) * 0.8 if side == 'buy' else -float(atr) * 0.8)
-    partial_qty = qty / 2
+    partial_qty = _round_qty(qty * float(PARTIAL_TP_RATIO))
+    remaining_qty = _round_qty(qty - partial_qty)
 
+    # Ensure both partial_qty and remaining_qty meet min qty
+    if partial_qty < MIN_QTY:
+        partial_qty = MIN_QTY
+    if remaining_qty < MIN_QTY:
+        remaining_qty = MIN_QTY
+
+    # Place TP (limit reduce-only) orders
     try:
-        exchange.create_order(symbol, 'take_profit_market', 'sell' if side == 'buy' else 'buy', partial_qty, None, {
-            'triggerPrice': partial_tp_price,
-            'stopPrice': partial_tp_price,
-            'positionSide': leverage_side,
-            'newClientOrderId': generate_client_order_id()
-        })
+        # For longs: place sell limits; for shorts: place buy limits
+        if partial_qty > 0:
+            place_limit_tp(symbol, side, partial_qty, round(partial_tp_price, 2))
+        if remaining_qty > 0:
+            place_limit_tp(symbol, side, remaining_qty, round(tp_price, 2))
     except Exception as e:
-        print(f"[Partial TP Error] {e}")
+        print(f"[Partial/Full TP Error] {e}")
 
+    # Place SL (stop-market / stop) order
     try:
-        exchange.create_order(symbol, 'take_profit_market', 'sell' if side == 'buy' else 'buy', qty - partial_qty, None, {
-            'triggerPrice': tp_price,
-            'stopPrice': tp_price,
-            'positionSide': leverage_side,
-            'newClientOrderId': generate_client_order_id()
-        })
-    except Exception as e:
-        print(f"[Full TP Error] {e}")
-
-    try:
-        exchange.create_order(symbol, 'stop_market', 'sell' if side == 'buy' else 'buy', qty, None, {
-            'triggerPrice': sl_price,
-            'stopPrice': sl_price,
-            'positionSide': leverage_side,
-            'newClientOrderId': generate_client_order_id()
-        })
+        place_stop_loss(symbol, side, _round_qty(qty), round(sl_price, 2), round(sl_price, 2))
     except Exception as e:
         print(f"[SL Error] {e}")
 
@@ -372,4 +440,5 @@ if __name__ == '__main__':
         time.sleep(20)
 
         time.sleep(20)
+
 
