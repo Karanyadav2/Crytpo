@@ -10,7 +10,7 @@ getcontext().prec = 18
 
 # ================== CONFIG ===================
 SYMBOL = 'ETH/USDT:USDT'  # only trade ETH/USDT
-TIMEFRAME = '30m'
+TIMEFRAME = '1h
 ORDER_SIZE_ETH = 0.03  # set >= 0.02 so partial TP (half) is >= Bybit min 0.01
 MIN_QTY = 0.01  # Bybit minimum quantity for ETH/USDT
 QTY_ROUND_DECIMALS = 2  # round qty to 2 decimals
@@ -437,6 +437,7 @@ if __name__ == '__main__':
         time.sleep(20)
 
         time.sleep(20)
+
 
 
 
