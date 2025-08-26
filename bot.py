@@ -11,13 +11,13 @@ getcontext().prec = 18
 # ================== CONFIG ===================
 SYMBOL = 'ETH/USDT:USDT'  # only trade ETH/USDT
 TIMEFRAME = '15m'
-ORDER_SIZE_ETH = 0.02  # set >= 0.02 so partial TP (half) is >= Bybit min 0.01
+ORDER_SIZE_ETH = 0.03  # set >= 0.02 so partial TP (half) is >= Bybit min 0.01
 MIN_QTY = 0.01  # Bybit minimum quantity for ETH/USDT
 QTY_ROUND_DECIMALS = 2  # round qty to 2 decimals
 
 LEVERAGE = 20
 COOLDOWN_PERIOD = 60
-VOLATILITY_THRESHOLD_PCT = Decimal('0.04')
+VOLATILITY_THRESHOLD_PCT = Decimal('0.02')
 FRESH_SIGNAL_MAX_PRICE_DEVIATION = 0.1
 PARTIAL_TP_RATIO = Decimal('0.5')
 TRAIL_ATR_MULTIPLIER = Decimal('1.2')
@@ -102,24 +102,18 @@ def place_limit_tp(symbol, side, qty, price, client_tag=None):
 
 
 def place_stop_loss(symbol, side, qty, trigger_price, client_tag=None):
-    """Place a conditional MARKET reduce-only SL on Bybit v5 via ccxt.
-    Bybit expects normal order types ('market'/'limit') + trigger params for conditional orders.
-    For a long (side='buy'), SL triggers when price descends -> triggerDirection='descending'.
-    For a short (side='sell'), SL triggers when price ascends -> triggerDirection='ascending'.
-    We also set positionIdx to bind the order to the correct hedge side if hedge mode is enabled.
+    """Place a conditional MARKET SL on Bybit without passing positionIdx (works for one-way mode).
+    Omit positionIdx because passing it in one-way mode causes "position idx not match position mode" errors.
+    We send a market order with triggerPrice and triggerDirection. If Bybit rejects it, we try a fallback that uses 'stop' order.
     """
     qty = _round_qty(qty)
     trigger_direction = 'descending' if side == 'buy' else 'ascending'
-    # 1 = long, 2 = short (Bybit positionIdx). If your account is one-way, Bybit ignores this.
-    position_idx = 1 if side == 'buy' else 2
     params = {
         'reduceOnly': True,
         'newClientOrderId': client_tag or generate_client_order_id(),
         'triggerPrice': float(trigger_price),
         'triggerDirection': trigger_direction,
-        'positionIdx': position_idx,
         'category': 'linear',  # linear USDT perpetuals
-        'timeInForce': 'GTC',
     }
     try:
         # Opposite side MARKET conditional with triggerPrice
@@ -127,9 +121,18 @@ def place_stop_loss(symbol, side, qty, trigger_price, client_tag=None):
             return exchange.create_order(symbol, 'market', 'sell', qty, None, params)
         else:
             return exchange.create_order(symbol, 'market', 'buy', qty, None, params)
-    except Exception as e:
-        print(f"[SL order error] {e}")
-        return None
+    except Exception as e_market:
+        print(f"[SL market failed] {e_market} — trying 'stop' fallback")
+        try:
+            params_fallback = params.copy()
+            # fallback to stop with a limit price equal to trigger_price (some ccxt bindings expect this)
+            if side == 'buy':
+                return exchange.create_order(symbol, 'stop', 'sell', qty, trigger_price, params_fallback)
+            else:
+                return exchange.create_order(symbol, 'stop', 'buy', qty, trigger_price, params_fallback)
+        except Exception as e_stop:
+            print(f"[SL fallback failed] {e_stop}")
+            return None
 
 # ================== INDICATORS ==================
 
@@ -434,9 +437,3 @@ if __name__ == '__main__':
         time.sleep(20)
 
         time.sleep(20)
-
-
-
-
-
-
