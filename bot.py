@@ -34,12 +34,13 @@ STRONG_TREND_ATR_MULT = 1.8
 REENTRY_MIN_DELAY = 300
 ATR_CHOPPY_THRESHOLD = Decimal('0.15')  # New filter for choppy/weak markets
 
-exchange = ccxt.bingx({
-    'apiKey': '5mhPjkTlc4oFILGyuzkdFwfulNwTVMpSAaWcRoKlNtccdFgwemn18a02Lc7ptVI6QxTUxHuMe38CLYN43tCQ',
-    'secret': 'cSMIhkp7BhDaMJETF6MHNHvIu8e5T69QsCDzS7h6TA9WBttWFWfbWY9g7xtbwD7davWhALqnPHylid9fLPO7A',
+# === Only change: switch from BingX to Bybit (futures / swap) ===
+exchange = ccxt.bybit({
+    'apiKey': 'YOUR_BYBIT_API_KEY',
+    'secret': 'YOUR_BYBIT_SECRET',
     'enableRateLimit': True,
     'options': {
-        'defaultType': 'swap',
+        'defaultType': 'swap',  # use linear perpetuals
     }
 })
 
@@ -188,8 +189,6 @@ def is_fresh_or_strong_signal(df):
 
     try:
         st_is_up = bool(st_dir.iloc[-1])
-
-
     except Exception:
         st_is_up = False
 
@@ -373,24 +372,3 @@ if __name__ == '__main__':
         time.sleep(20)
 
         time.sleep(20)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
