@@ -38,17 +38,17 @@ ATR_CHOPPY_THRESHOLD = Decimal('0.15')  # New filter for choppy/weak markets
 
 # === Only change: switch from BingX to Bybit (futures / swap) ===
 exchange = ccxt.bybit({
-    'apiKey': 'kUjPvWmIIvbBxPYDXS',
-    'secret': 'lWy3BCYftFohf9ilQjEyWVJlxctumbnJJTvU',
+    'apiKey': 'YOUR_BYBIT_API_KEY',
+    'secret': 'YOUR_BYBIT_SECRET',
     'enableRateLimit': True,
     'options': {
         'defaultType': 'swap',  # use linear perpetuals
     }
 })
 
-# try to set leverage (some ccxt versions require params differently)
+# try to set leverage (ok if it says "leverage not modified")
 try:
-    exchange.set_leverage(LEVERAGE, SYMBOL)
+    exchange.set_leverage(LEVERAGE, SYMBOL, params={'category': 'linear'})
 except Exception as e:
     print(f"[Leverage setup warning] {e}")
 
@@ -101,40 +101,35 @@ def place_limit_tp(symbol, side, qty, price, client_tag=None):
         return None
 
 
-def place_stop_loss(symbol, side, qty, trigger_price, stop_price, client_tag=None):
-    """Place a stop/stop-market order as SL. We include triggerDirection param (ascending/descending) as required by Bybit.
-    For a long (side='buy'), stop should trigger when price descends -> 'descending'. For a short, trigger when price ascends -> 'ascending'.
-    We attempt to use ccxt's stop order by creating type 'stop_market' first and fall back to 'stop'.
+def place_stop_loss(symbol, side, qty, trigger_price, client_tag=None):
+    """Place a conditional MARKET reduce-only SL on Bybit v5 via ccxt.
+    Bybit expects normal order types ('market'/'limit') + trigger params for conditional orders.
+    For a long (side='buy'), SL triggers when price descends -> triggerDirection='descending'.
+    For a short (side='sell'), SL triggers when price ascends -> triggerDirection='ascending'.
+    We also set positionIdx to bind the order to the correct hedge side if hedge mode is enabled.
     """
     qty = _round_qty(qty)
     trigger_direction = 'descending' if side == 'buy' else 'ascending'
+    # 1 = long, 2 = short (Bybit positionIdx). If your account is one-way, Bybit ignores this.
+    position_idx = 1 if side == 'buy' else 2
     params = {
         'reduceOnly': True,
         'newClientOrderId': client_tag or generate_client_order_id(),
+        'triggerPrice': float(trigger_price),
         'triggerDirection': trigger_direction,
+        'positionIdx': position_idx,
+        'category': 'linear',  # linear USDT perpetuals
+        'timeInForce': 'GTC',
     }
-    # Try stop-market first
     try:
-        params_with_trigger = params.copy()
-        params_with_trigger.update({'triggerPrice': trigger_price, 'stopPrice': stop_price})
+        # Opposite side MARKET conditional with triggerPrice
         if side == 'buy':
-            resp = exchange.create_order(symbol, 'stop_market', 'sell', qty, None, params_with_trigger)
+            return exchange.create_order(symbol, 'market', 'sell', qty, None, params)
         else:
-            resp = exchange.create_order(symbol, 'stop_market', 'buy', qty, None, params_with_trigger)
-        return resp
-    except Exception as e_stop_market:
-        print(f"[stop_market failed] {e_stop_market} — trying 'stop' order type")
-        try:
-            params_with_trigger = params.copy()
-            params_with_trigger.update({'triggerPrice': trigger_price, 'stopPrice': stop_price})
-            if side == 'buy':
-                resp = exchange.create_order(symbol, 'stop', 'sell', qty, stop_price, params_with_trigger)
-            else:
-                resp = exchange.create_order(symbol, 'stop', 'buy', qty, stop_price, params_with_trigger)
-            return resp
-        except Exception as e_stop:
-            print(f"[stop order failed] {e_stop}")
-            return None
+            return exchange.create_order(symbol, 'market', 'buy', qty, None, params)
+    except Exception as e:
+        print(f"[SL order error] {e}")
+        return None
 
 # ================== INDICATORS ==================
 
@@ -387,7 +382,6 @@ def place_order(symbol, side, entry_price, atr, qty_override=None):
 
     # Place TP (limit reduce-only) orders
     try:
-        # For longs: place sell limits; for shorts: place buy limits
         if partial_qty > 0:
             place_limit_tp(symbol, side, partial_qty, round(partial_tp_price, 2))
         if remaining_qty > 0:
@@ -395,9 +389,9 @@ def place_order(symbol, side, entry_price, atr, qty_override=None):
     except Exception as e:
         print(f"[Partial/Full TP Error] {e}")
 
-    # Place SL (stop-market / stop) order
+    # Place SL (conditional MARKET) order
     try:
-        place_stop_loss(symbol, side, _round_qty(qty), round(sl_price, 2), round(sl_price, 2))
+        place_stop_loss(symbol, side, _round_qty(qty), round(sl_price, 2))
     except Exception as e:
         print(f"[SL Error] {e}")
 
@@ -440,6 +434,7 @@ if __name__ == '__main__':
         time.sleep(20)
 
         time.sleep(20)
+
 
 
 
