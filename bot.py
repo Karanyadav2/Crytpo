@@ -15,7 +15,7 @@ ORDER_SIZE_ETH = 0.02  # set >= 0.02 so partial TP (half) is >= Bybit min 0.01
 MIN_QTY = 0.01  # Bybit minimum quantity for ETH/USDT
 QTY_ROUND_DECIMALS = 2  # round qty to 2 decimals
 
-LEVERAGE = 20
+LEVERAGE = 22
 COOLDOWN_PERIOD = 60
 VOLATILITY_THRESHOLD_PCT = Decimal('0.02')
 FRESH_SIGNAL_MAX_PRICE_DEVIATION = 0.1
@@ -437,6 +437,7 @@ if __name__ == '__main__':
         time.sleep(20)
 
         time.sleep(20)
+
 
 
 
