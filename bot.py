@@ -28,6 +28,7 @@ SUPERTREND_MULTIPLIER = 3.0
 # --- Replaced Stochastic with MACD + ADX ---
 MACD_FAST = 12
 MACD_SLOW = 26
+ACD_SIGNAL = 9
 MACD_SIGNAL = 9
 ADX_PERIOD = 14
 ADX_THRESHOLD = 18
@@ -63,6 +64,7 @@ last_signal_dir = None
 
 def generate_client_order_id():
     return "ccbot-" + uuid.uuid4().hex[:16]
+
 
 def fetch_ohlcv(symbol, timeframe, limit=200):
     ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
@@ -189,6 +191,7 @@ def compute_supertrend(df, period=SUPERTREND_PERIOD, multiplier=SUPERTREND_MULTI
 
     return direction, atr
 
+
 # --- New: MACD ---
 
 def compute_macd(df, fast=MACD_FAST, slow=MACD_SLOW, signal=MACD_SIGNAL):
@@ -199,6 +202,7 @@ def compute_macd(df, fast=MACD_FAST, slow=MACD_SLOW, signal=MACD_SIGNAL):
     macd_signal = macd_line.ewm(span=signal, adjust=False).mean()
     macd_hist = macd_line - macd_signal
     return macd_line, macd_signal, macd_hist
+
 
 # --- New: ADX ---
 
@@ -308,6 +312,104 @@ def in_position(symbol):
         print(f"[in_position warning] {e}")
     return False
 
+
+# ================== NEW: Strong reversal detection & flip ==================
+
+def detect_strong_reversal_and_flip(df):
+    """If an active position exists and a strong reversal is detected, close the existing position
+    and open a new position in the direction of the new strong trend.
+
+    This function attempts to preserve all existing logic and sizing. It uses the same ATR/ADX/MACD/Supertrend
+    filters to decide whether the reversal qualifies as "strong".
+    """
+    try:
+        if SYMBOL not in open_trades:
+            return False
+
+        current = open_trades[SYMBOL]
+        side = current.get('side')  # 'buy' or 'sell'
+        entry_price = float(current.get('entry_price', 0))
+        qty = float(current.get('qty_total', ORDER_SIZE_ETH))
+
+        # compute indicators
+        st_dir, atr = compute_supertrend(df)
+        macd_line, macd_signal, macd_hist = compute_macd(df)
+        adx, plus_di, minus_di = compute_adx(df)
+
+        price = df['close'].iloc[-1]
+        atr_latest = float(atr.iloc[-1])
+        current_adx = float(adx.iloc[-1])
+        try:
+            st_is_up = bool(st_dir.iloc[-1])
+        except Exception:
+            st_is_up = False
+
+        # Conditions for strong reversal: supertrend flipped, ADX strong, MACD cross indicating reversal,
+        # and price has moved beyond entry by > STRONG_TREND_ATR_MULT * ATR (to get ahead of SL).
+        reversal_detected = False
+        new_side = None
+
+        # LONG exists, detect strong sell
+        if side == 'buy':
+            macd_cross_down = (macd_line.iloc[-2] > macd_signal.iloc[-2]) and (macd_line.iloc[-1] < macd_signal.iloc[-1])
+            price_drop = entry_price - price
+            if (not st_is_up) and current_adx >= ADX_THRESHOLD and (macd_cross_down or macd_hist.iloc[-1] < 0) and (price_drop > (atr_latest * STRONG_TREND_ATR_MULT)):
+                reversal_detected = True
+                new_side = 'sell'
+
+        # SHORT exists, detect strong buy
+        elif side == 'sell':
+            macd_cross_up = (macd_line.iloc[-2] < macd_signal.iloc[-2]) and (macd_line.iloc[-1] > macd_signal.iloc[-1])
+            price_rise = price - entry_price
+            if st_is_up and current_adx >= ADX_THRESHOLD and (macd_cross_up or macd_hist.iloc[-1] > 0) and (price_rise > (atr_latest * STRONG_TREND_ATR_MULT)):
+                reversal_detected = True
+                new_side = 'buy'
+
+        if not reversal_detected:
+            return False
+
+        # Prevent flips too close to last trade
+        if time.time() - last_trade_time.get(SYMBOL, 0) < REENTRY_MIN_DELAY:
+            print("[Flip] Too soon since last trade, skipping flip")
+            return False
+
+        print(f"[Flip] Strong reversal detected: closing {side} and opening {new_side}")
+
+        # Close existing position via a REDUCE-ONLY market order
+        try:
+            close_params = {'reduceOnly': True, 'newClientOrderId': generate_client_order_id()}
+            if side == 'buy':
+                # sell to close long
+                exchange.create_order(SYMBOL, 'market', 'sell', _round_qty(qty), None, close_params)
+            else:
+                # buy to close short
+                exchange.create_order(SYMBOL, 'market', 'buy', _round_qty(qty), None, close_params)
+            # small pause to allow exchange to register the position closure
+            time.sleep(1)
+        except Exception as e:
+            print(f"[Flip Close Error] {e}")
+            # Attempt to continue to open new side even if close had issues (best-effort)
+
+        # Remove previous trade meta
+        try:
+            del open_trades[SYMBOL]
+        except Exception:
+            open_trades.pop(SYMBOL, None)
+
+        # Open new position in direction of trend using same qty
+        try:
+            print(f"[Flip] Opening new {new_side} position of qty {_round_qty(qty)}")
+            place_order(SYMBOL, new_side, price, atr_latest, qty_override=_round_qty(qty))
+            last_trade_time[SYMBOL] = time.time()
+            return True
+        except Exception as e:
+            print(f"[Flip Open Error] {e}")
+            return False
+
+    except Exception as e:
+        print(f"[detect_strong_reversal_and_flip error] {e}")
+        return False
+
 # ================== EXECUTION ==================
 
 def signal_strength_and_execute(df):
@@ -344,12 +446,14 @@ def signal_strength_and_execute(df):
         return True
     return False
 
+
 def calculate_tp_sl(entry_price, atr, side):
     entry_price = float(entry_price)
     atr = float(atr)
     tp_price = entry_price + (atr * 1.5 if side == 'buy' else -atr * 1.5)
     sl_price = entry_price - (atr * 1.8 if side == 'buy' else -atr * 1.8)
     return float(round(tp_price, 8)), float(round(sl_price, 8))
+
 
 def place_order(symbol, side, entry_price, atr, qty_override=None):
     qty = float(qty_override) if qty_override is not None else float(ORDER_SIZE_ETH)
@@ -429,6 +533,18 @@ if __name__ == '__main__':
             else:
                 df = fetch_ohlcv(SYMBOL, TIMEFRAME)
                 try:
+                    # === NEW: check for strong reversal and flip position if needed ===
+                    try:
+                        flipped = detect_strong_reversal_and_flip(df)
+                        if flipped:
+                            # if flipped, we already closed & opened the new position; skip normal signal handling this cycle
+                            print("[Main] Flip executed this cycle — skipping fresh signal exec")
+                            # small pause to avoid immediate re-evaluation
+                            time.sleep(1)
+                            continue
+                    except Exception as e:
+                        print(f"[Flip Check Error] {e}")
+
                     signal_strength_and_execute(df)
                 except Exception as e:
                     print(f"[Signal Error] {e}")
@@ -437,12 +553,3 @@ if __name__ == '__main__':
         time.sleep(20)
 
         time.sleep(20)
-
-
-
-
-
-
-
-
-
